@@ -237,6 +237,148 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     };
 
+
+    private LinearLayout solatPanel;
+    private TextView solatDateView, solatNextView, solatTimesView;
+    private org.json.JSONObject solatToday;
+    private long solatLastFetch;
+    private static final long SOLAT_REFRESH_MS = 6L * 60L * 60L * 1000L;
+
+    private void setupSolatPanel() {
+        solatPanel = new LinearLayout(this);
+        solatPanel.setOrientation(LinearLayout.VERTICAL);
+        solatPanel.setPadding(dpSolat(18), dpSolat(14), dpSolat(18), dpSolat(14));
+        solatPanel.setBackground(new android.graphics.drawable.GradientDrawable() {{
+            setColor(0xCC101820);
+            setCornerRadius(dpSolat(14));
+            setStroke(dpSolat(1), 0x55FFFFFF);
+        }});
+        solatPanel.setFocusable(false);
+        solatPanel.setClickable(false);
+        solatPanel.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+
+        TextView title = new TextView(this);
+        title.setText("WAKTU SOLAT · MELAKA");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(13);
+        title.setLetterSpacing(0.08f);
+        solatPanel.addView(title);
+
+        solatDateView = new TextView(this);
+        solatDateView.setTextColor(0xFFB9DCCF);
+        solatDateView.setTextSize(12);
+        solatDateView.setPadding(0, dpSolat(5), 0, dpSolat(8));
+        solatPanel.addView(solatDateView);
+
+        solatTimesView = new TextView(this);
+        solatTimesView.setTextColor(0xFFE7EDF2);
+        solatTimesView.setTextSize(13);
+        solatTimesView.setLineSpacing(dpSolat(4), 1f);
+        solatTimesView.setText("Memuatkan waktu solat…");
+        solatPanel.addView(solatTimesView);
+
+        solatNextView = new TextView(this);
+        solatNextView.setTextColor(0xFF8BE0BB);
+        solatNextView.setTextSize(13);
+        solatNextView.setPadding(0, dpSolat(9), 0, 0);
+        solatPanel.addView(solatNextView);
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+            dpSolat(245), ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP | Gravity.END);
+        lp.setMargins(0, dpSolat(145), dpSolat(56), 0);
+        root.addView(solatPanel, lp);
+
+        SolatMelaka.fetch(new SolatMelaka.Callback() {
+            @Override public void onResult(org.json.JSONObject data) {
+                solatToday = data;
+                solatLastFetch = System.currentTimeMillis();
+                renderSolatPanel();
+            }
+            @Override public void onError() {
+                if (solatTimesView != null && solatToday == null) {
+                    solatTimesView.setText("Waktu solat tidak tersedia\nSemak sambungan internet");
+                    solatNextView.setText("");
+                }
+            }
+        });
+        handler.post(minuteSolatTick);
+    }
+
+    private int dpSolat(float dp) {
+        return (int) (dp * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private final Runnable minuteSolatTick = new Runnable() {
+        @Override public void run() {
+            if (solatPanel == null) return;
+            if (System.currentTimeMillis() - solatLastFetch > SOLAT_REFRESH_MS) {
+                SolatMelaka.fetch(new SolatMelaka.Callback() {
+                    @Override public void onResult(org.json.JSONObject data) {
+                        solatToday = data;
+                        solatLastFetch = System.currentTimeMillis();
+                        renderSolatPanel();
+                    }
+                    @Override public void onError() { renderSolatPanel(); }
+                });
+            } else {
+                renderSolatPanel();
+            }
+            handler.postDelayed(this, MINUTE_MS);
+        }
+    };
+
+    private void renderSolatPanel() {
+        if (solatToday == null || solatTimesView == null) return;
+        String hijri = solatToday.optString("hijri", "");
+        String gregorian = solatToday.optString("date", "");
+        solatDateView.setText(gregorian + (hijri.isEmpty() ? "" : "  ·  Hijrah " + hijri));
+
+        String[] keys = {"fajr", "syuruk", "dhuhr", "asr", "maghrib", "isha"};
+        String[] names = {"Subuh", "Syuruk", "Zohor", "Asar", "Maghrib", "Isyak"};
+        StringBuilder lines = new StringBuilder();
+        java.text.SimpleDateFormat clockFormat = new java.text.SimpleDateFormat("HH:mm", Locale.getDefault());
+        java.util.Date now = new java.util.Date();
+        String nowTime = new java.text.SimpleDateFormat("HH:mm:ss", Locale.US).format(now);
+        String nextName = null;
+        long nextMillis = Long.MAX_VALUE;
+        java.util.Calendar current = java.util.Calendar.getInstance();
+
+        for (int i = 0; i < keys.length; i++) {
+            String raw = solatToday.optString(keys[i], "");
+            String shown = raw.length() >= 5 ? raw.substring(0, 5) : "--:--";
+            if (i > 0) lines.append("\n");
+            lines.append(names[i]).append("   ").append(shown);
+
+            if (i == 1) continue;
+            if (raw.matches("\\d{2}:\\d{2}(:\\d{2})?") && raw.compareTo(nowTime) > 0) {
+                try {
+                    String[] parts = raw.split(":");
+                    java.util.Calendar target = (java.util.Calendar) current.clone();
+                    target.set(java.util.Calendar.HOUR_OF_DAY, Integer.parseInt(parts[0]));
+                    target.set(java.util.Calendar.MINUTE, Integer.parseInt(parts[1]));
+                    target.set(java.util.Calendar.SECOND, 0);
+                    target.set(java.util.Calendar.MILLISECOND, 0);
+                    long diff = target.getTimeInMillis() - current.getTimeInMillis();
+                    if (diff > 0 && diff < nextMillis) {
+                        nextMillis = diff;
+                        nextName = names[i];
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        solatTimesView.setText(lines.toString());
+        if (nextName == null) {
+            solatNextView.setText("Solat seterusnya: Subuh esok");
+        } else {
+            long mins = nextMillis / 60000L;
+            long hours = mins / 60L;
+            long remain = mins % 60L;
+            solatNextView.setText("Seterusnya: " + nextName + "  ·  " +
+                (hours > 0 ? hours + "j " : "") + remain + "m lagi");
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -478,6 +620,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                     .build(), vpnCallback);
         }
+            setupSolatPanel();
     }
 
     /**
@@ -676,7 +819,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         handler.removeCallbacks(cacheClean);
         handler.postDelayed(cacheClean, CacheCleaner.IDLE_MS);
         hiddenSinceResume = false;
-    }
+
+        handler.removeCallbacks(minuteSolatTick);
+        handler.post(minuteSolatTick);
+}
 
     /** Rebuilds the tiles (and the module cards), then puts focus back where it was. */
     private void reloadApps(boolean animate) {
@@ -765,7 +911,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (openPopup != null) openPopup.dismiss();
         closeMenu(false);
         finishMove();
-    }
+
+        handler.removeCallbacks(minuteSolatTick);
+}
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
