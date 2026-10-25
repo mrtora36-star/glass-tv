@@ -288,6 +288,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             Gravity.TOP | Gravity.END);
         lp.setMargins(0, dpSolat(145), dpSolat(56), 0);
         root.addView(solatPanel, lp);
+        solatPanel.setVisibility(View.VISIBLE);
+        solatPanel.bringToFront();
+        solatPanel.setElevation(dpSolat(100));
 
         SolatMelaka.fetch(new SolatMelaka.Callback() {
             @Override public void onResult(org.json.JSONObject data) {
